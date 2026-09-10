@@ -15,16 +15,21 @@ scenarios("../features/publishing.feature")
 
 
 @given("I am logged into Ghost")
-def logged_in(page: Page, base_url: str, bdd_data: dict):
+def logged_in(
+    page: Page,
+    base_url: str,
+    bdd_data: dict,
+):
     email = os.getenv("GHOST_EMAIL")
     password = os.getenv("GHOST_PASSWORD")
 
     if not email or not password:
         raise RuntimeError(
-            "GHOST_EMAIL and GHOST_PASSWORD must be set in .env"
+            "GHOST_EMAIL and GHOST_PASSWORD must be set."
         )
 
     login = LoginPage(page)
+
     login.open(base_url)
     login.login(email, password)
 
@@ -32,7 +37,11 @@ def logged_in(page: Page, base_url: str, bdd_data: dict):
 
 
 @when("I create and publish a new post")
-def create_and_publish(page: Page, base_url: str, bdd_data: dict):
+def create_and_publish(
+    page: Page,
+    base_url: str,
+    bdd_data: dict,
+):
     title = (
         f"BDD QA Post "
         f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
@@ -45,7 +54,7 @@ def create_and_publish(page: Page, base_url: str, bdd_data: dict):
 
     posts.create_post(
         title,
-        "This post was created through a BDD scenario."
+        "This post was created through a BDD scenario.",
     )
 
     posts.publish()
@@ -58,7 +67,7 @@ def create_and_publish(page: Page, base_url: str, bdd_data: dict):
 def verify_published_post(
     page: Page,
     base_url: str,
-    bdd_data: dict
+    bdd_data: dict,
 ):
     posts = bdd_data["posts"]
 
@@ -66,7 +75,7 @@ def verify_published_post(
 
     post = page.get_by_text(
         bdd_data["title"],
-        exact=True
+        exact=True,
     ).first
 
     expect(post).to_be_visible()
