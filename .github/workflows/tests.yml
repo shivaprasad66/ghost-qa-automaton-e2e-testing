@@ -17,7 +17,6 @@ jobs:
 
     strategy:
       fail-fast: false
-
       matrix:
         browser:
           - chromium
@@ -55,12 +54,28 @@ jobs:
         run: |
           python -m playwright install --with-deps ${{ matrix.browser }}
 
-      - name: Generate CI Ghost credentials
+      - name: Generate fresh CI Ghost credentials
         shell: bash
         run: |
+          GHOST_EMAIL="qa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com"
+          GHOST_PASSWORD="$(python - <<'PY'
+          import secrets
+          import string
+
+          alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+          password = (
+              "Qa!"
+              + "".join(secrets.choice(alphabet) for _ in range(28))
+              + "9Z"
+          )
+
+          print(password)
+          PY
+          )"
+
           echo "GHOST_URL=http://localhost:3001" >> "$GITHUB_ENV"
-          echo "GHOST_EMAIL=qa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com" >> "$GITHUB_ENV"
-          echo "GHOST_PASSWORD=Qa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-GhostTest!2026" >> "$GITHUB_ENV"
+          echo "GHOST_EMAIL=$GHOST_EMAIL" >> "$GITHUB_ENV"
+          echo "GHOST_PASSWORD=$GHOST_PASSWORD" >> "$GITHUB_ENV"
 
       - name: Check Ghost service
         shell: bash
@@ -68,7 +83,7 @@ jobs:
           echo "Checking Ghost container..."
           docker ps -a
 
-          echo "Checking Ghost port..."
+          echo "Checking Ghost API..."
           curl --fail --silent --show-error \
             http://localhost:3001/ghost/api/admin/site/ \
             > /dev/null
