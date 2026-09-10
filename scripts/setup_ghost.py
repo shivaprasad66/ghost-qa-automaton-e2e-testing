@@ -1,6 +1,5 @@
 import json
 import os
-import sys
 import time
 import urllib.error
 import urllib.request
@@ -10,55 +9,89 @@ GHOST_URL = os.getenv("GHOST_URL", "http://localhost:3001").rstrip("/")
 GHOST_EMAIL = os.getenv("GHOST_EMAIL")
 GHOST_PASSWORD = os.getenv("GHOST_PASSWORD")
 
-SETUP_STATUS_URL = (
-    f"{GHOST_URL}/ghost/api/admin/authentication/setup/"
-)
-
-SETUP_URL = (
-    f"{GHOST_URL}/ghost/api/admin/authentication/setup/"
-)
+READY_URL = f"{GHOST_URL}/ghost/api/admin/site/"
+SETUP_URL = f"{GHOST_URL}/ghost/api/admin/authentication/setup/"
 
 
-def get_setup_status():
+def request_json(url, method="GET", payload=None, timeout=30):
+    data = None
+
+    headers = {
+        "Accept": "application/json",
+    }
+
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
     request = urllib.request.Request(
-        SETUP_STATUS_URL,
-        method="GET",
-        headers={
-            "Accept": "application/json",
-        },
+        url,
+        data=data,
+        method=method,
+        headers=headers,
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read().decode("utf-8")
             return response.status, json.loads(body)
 
     except urllib.error.HTTPError as error:
         body = error.read().decode("utf-8", errors="replace")
         raise RuntimeError(
-            f"Ghost setup status failed: HTTP {error.code}\n{body}"
-        )
+            f"HTTP {error.code} from {url}\n{body}"
+        ) from error
+
+    except Exception as error:
+        raise RuntimeError(
+            f"Request failed: {url}\n{error}"
+        ) from error
 
 
 def wait_for_ghost():
     print(f"Waiting for Ghost at {GHOST_URL}...")
 
-    deadline = time.time() + 120
+    deadline = time.time() + 300
+
+    last_error = None
 
     while time.time() < deadline:
         try:
-            status_code, data = get_setup_status()
+            status, data = request_json(
+                READY_URL,
+                method="GET",
+                timeout=10,
+            )
 
-            if status_code == 200:
-                print(f"Ghost is ready: setup.status={data.get('setup', {}).get('status')}")
-                return data
+            if status == 200:
+                print("Ghost is responding.")
+                print(f"Site response: {data}")
+                return
 
-        except Exception:
-            pass
+        except Exception as error:
+            last_error = error
+            print(f"Ghost not ready yet: {error}")
 
-        time.sleep(3)
+        time.sleep(5)
 
-    raise RuntimeError("Ghost did not become ready within 120 seconds.")
+    raise RuntimeError(
+        "Ghost did not become ready within 300 seconds.\n"
+        f"Last error: {last_error}"
+    )
+
+
+def check_setup_status():
+    status, data = request_json(
+        SETUP_URL,
+        method="GET",
+        timeout=20,
+    )
+
+    print(f"Ghost setup response: {data}")
+
+    setup = data.get("setup", {})
+
+    return setup.get("status")
 
 
 def create_owner():
@@ -79,37 +112,33 @@ def create_owner():
         ]
     }
 
-    body = json.dumps(payload).encode("utf-8")
-
-    request = urllib.request.Request(
-        SETUP_URL,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-    )
+    print("Creating fresh Ghost owner account...")
+    print(f"Owner email: {GHOST_EMAIL}")
 
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            response_body = response.read().decode("utf-8")
-
-            if response.status not in (200, 201):
-                raise RuntimeError(
-                    f"Ghost owner creation failed: HTTP {response.status}\n"
-                    f"{response_body}"
-                )
-
-            print("Ghost owner account created successfully.")
-
-    except urllib.error.HTTPError as error:
-        response_body = error.read().decode("utf-8", errors="replace")
-
-        raise RuntimeError(
-            f"Ghost owner creation failed: HTTP {error.code}\n"
-            f"{response_body}"
+        status, data = request_json(
+            SETUP_URL,
+            method="POST",
+            payload=payload,
+            timeout=120,
         )
+
+        print(f"Ghost setup POST returned HTTP {status}.")
+        print(f"Ghost setup response: {data}")
+
+    except Exception as error:
+        print(f"Ghost setup request reported an error: {error}")
+        print("Checking whether the account was created anyway...")
+
+        time.sleep(5)
+
+        setup_status = check_setup_status()
+
+        if setup_status is True:
+            print("Ghost setup completed successfully.")
+            return
+
+        raise
 
 
 def main():
@@ -117,25 +146,22 @@ def main():
     print(f"Ghost URL: {GHOST_URL}")
     print(f"Test email: {GHOST_EMAIL}")
 
-    setup_data = wait_for_ghost()
+    wait_for_ghost()
 
-    setup_status = (
-        setup_data
-        .get("setup", {})
-        .get("status")
-    )
+    setup_status = check_setup_status()
 
     if setup_status is True:
         print("Ghost is already initialized.")
         return
 
-    if setup_status is not False:
-        print(f"Unexpected Ghost setup response: {setup_data}")
-        sys.exit(1)
+    if setup_status is False:
+        create_owner()
+        print("Ghost owner account created successfully.")
+        return
 
-    create_owner()
-
-    print("Ghost CI bootstrap completed.")
+    raise RuntimeError(
+        f"Unexpected Ghost setup status: {setup_status}"
+    )
 
 
 if __name__ == "__main__":

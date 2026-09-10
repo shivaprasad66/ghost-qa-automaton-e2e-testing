@@ -51,14 +51,20 @@ jobs:
         run: |
           python -m playwright install --with-deps ${{ matrix.browser }}
 
-      - name: Create fresh Ghost test credentials
+      - name: Create fresh CI credentials
         shell: bash
         run: |
           echo "GHOST_URL=http://localhost:3001" >> "$GITHUB_ENV"
           echo "GHOST_EMAIL=qa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com" >> "$GITHUB_ENV"
           echo "GHOST_PASSWORD=Qa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-GhostTest!2026" >> "$GITHUB_ENV"
 
-      - name: Initialize Ghost owner account
+      - name: Show Ghost container status
+        if: always()
+        run: |
+          docker ps -a
+          docker logs $(docker ps -aq --filter ancestor=ghost:5-alpine | head -n 1) || true
+
+      - name: Initialize fresh Ghost account
         run: |
           python scripts/setup_ghost.py
 
@@ -80,12 +86,14 @@ jobs:
         with:
           name: allure-results-${{ matrix.browser }}
           path: allure-results/
+          if-no-files-found: ignore
 
-      - name: Upload pytest results
+      - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pytest-results-${{ matrix.browser }}
+          name: test-artifacts-${{ matrix.browser }}
           path: |
             test-results/
             screenshots/current/
+          if-no-files-found: ignore
