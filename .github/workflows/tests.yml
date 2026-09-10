@@ -9,8 +9,18 @@ on:
       - main
 
 jobs:
-  tests:
+  test:
+    name: Tests - ${{ matrix.browser }}
+
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        browser:
+          - chromium
+          - firefox
+          - webkit
 
     services:
       ghost:
@@ -19,13 +29,9 @@ jobs:
           - 3001:2368
         env:
           NODE_ENV: development
+          url: http://localhost:3001
           security__staffDeviceVerification: "false"
           mail__transport: Direct
-        options: >-
-          --health-cmd "wget --no-verbose --tries=1 --spider http://localhost:2368/ || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
 
     steps:
       - name: Checkout repository
@@ -41,42 +47,45 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install Playwright browsers
+      - name: Install Playwright browser
         run: |
-          python -m playwright install --with-deps chromium firefox webkit
+          python -m playwright install --with-deps ${{ matrix.browser }}
 
-      - name: Wait for Ghost
+      - name: Create fresh Ghost test credentials
+        shell: bash
         run: |
-          python - <<'PY'
-          import time
-          import urllib.request
+          echo "GHOST_URL=http://localhost:3001" >> "$GITHUB_ENV"
+          echo "GHOST_EMAIL=qa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com" >> "$GITHUB_ENV"
+          echo "GHOST_PASSWORD=Qa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-GhostTest!2026" >> "$GITHUB_ENV"
 
-          url = "http://localhost:3001/"
-
-          for _ in range(30):
-              try:
-                  urllib.request.urlopen(url, timeout=2)
-                  print("Ghost is ready")
-                  break
-              except Exception:
-                  time.sleep(2)
-          else:
-              raise SystemExit("Ghost did not become ready")
-          PY
-
-      - name: Run smoke and quality tests
-      
+      - name: Initialize Ghost owner account
         run: |
-          pytest -v \
-            --browser=chromium \
-            --browser=firefox \
-            --browser=webkit
+          python scripts/setup_ghost.py
 
-      - name: Upload test artifacts
+      - name: Run QA tests
+        run: |
+          pytest \
+            tests/test_smoke.py \
+            tests/test_login.py \
+            tests/test_posts.py \
+            tests/test_publishing_bdd.py \
+            tests/test_accessibility.py \
+            --browser=${{ matrix.browser }} \
+            -v \
+            --alluredir=allure-results
+
+      - name: Upload Allure results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-test-results
+          name: allure-results-${{ matrix.browser }}
+          path: allure-results/
+
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results-${{ matrix.browser }}
           path: |
             test-results/
-            allure-results/
+            screenshots/current/
