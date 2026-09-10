@@ -64,10 +64,8 @@ jobs:
               raise SystemExit("Ghost did not become ready")
           PY
 
-      - name: Run tests
-        env:
-          GHOST_EMAIL: ${{ secrets.GHOST_EMAIL }}
-          GHOST_PASSWORD: ${{ secrets.GHOST_PASSWORD }}
+      - name: Run smoke and quality tests
+      
         run: |
           pytest -v \
             --browser=chromium \

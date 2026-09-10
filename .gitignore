@@ -4,5 +4,5 @@ __pycache__/
 allure-results/
 allure-report/
 test-results/
-screenshots/*.png
+screenshots/current/
 .env/
