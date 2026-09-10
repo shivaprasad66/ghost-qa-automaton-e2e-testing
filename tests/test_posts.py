@@ -6,15 +6,24 @@ from pages.login_page import LoginPage
 from pages.posts_page import PostsPage
 
 
-def test_create_and_publish_post(page: Page, base_url: str):
-    title = f"QA Automation Post {datetime.now().strftime('%H%M%S%f')}"
+def test_create_and_publish_post(
+    page: Page,
+    base_url: str,
+    ghost_credentials: dict,
+):
+    title = (
+        f"QA Automation Post "
+        f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+    )
+
     body = "This post was created by the Ghost QA automation suite."
 
     login = LoginPage(page)
     login.open(base_url)
+
     login.login(
-        "james@gmail.com",
-        "1234567899"
+        ghost_credentials["email"],
+        ghost_credentials["password"],
     )
 
     posts = PostsPage(page)
