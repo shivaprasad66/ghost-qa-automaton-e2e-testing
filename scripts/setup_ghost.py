@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -13,7 +14,7 @@ READY_URL = f"{GHOST_URL}/ghost/api/admin/site/"
 SETUP_URL = f"{GHOST_URL}/ghost/api/admin/authentication/setup/"
 
 
-def request_json(url, method="GET", payload=None, timeout=30):
+def http_request(url, method="GET", payload=None, timeout=30):
     data = None
 
     headers = {
@@ -34,17 +35,22 @@ def request_json(url, method="GET", payload=None, timeout=30):
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read().decode("utf-8")
+
+            if not body:
+                return response.status, {}
+
             return response.status, json.loads(body)
 
     except urllib.error.HTTPError as error:
         body = error.read().decode("utf-8", errors="replace")
+
         raise RuntimeError(
             f"HTTP {error.code} from {url}\n{body}"
         ) from error
 
     except Exception as error:
         raise RuntimeError(
-            f"Request failed: {url}\n{error}"
+            f"Request failed for {url}\n{error}"
         ) from error
 
 
@@ -52,12 +58,11 @@ def wait_for_ghost():
     print(f"Waiting for Ghost at {GHOST_URL}...")
 
     deadline = time.time() + 300
-
     last_error = None
 
     while time.time() < deadline:
         try:
-            status, data = request_json(
+            status, data = http_request(
                 READY_URL,
                 method="GET",
                 timeout=10,
@@ -80,8 +85,8 @@ def wait_for_ghost():
     )
 
 
-def check_setup_status():
-    status, data = request_json(
+def get_setup_status():
+    status, data = http_request(
         SETUP_URL,
         method="GET",
         timeout=20,
@@ -89,9 +94,21 @@ def check_setup_status():
 
     print(f"Ghost setup response: {data}")
 
-    setup = data.get("setup", {})
+    setup = data.get("setup")
 
-    return setup.get("status")
+    if not isinstance(setup, list) or not setup:
+        raise RuntimeError(
+            f"Unexpected Ghost setup response format: {data}"
+        )
+
+    first_item = setup[0]
+
+    if not isinstance(first_item, dict):
+        raise RuntimeError(
+            f"Unexpected Ghost setup item: {first_item}"
+        )
+
+    return first_item.get("status")
 
 
 def create_owner():
@@ -115,30 +132,45 @@ def create_owner():
     print("Creating fresh Ghost owner account...")
     print(f"Owner email: {GHOST_EMAIL}")
 
-    try:
-        status, data = request_json(
-            SETUP_URL,
-            method="POST",
-            payload=payload,
-            timeout=120,
+    status, data = http_request(
+        SETUP_URL,
+        method="POST",
+        payload=payload,
+        timeout=120,
+    )
+
+    print(f"Ghost setup POST returned HTTP {status}.")
+
+    if data:
+        print(f"Ghost setup POST response: {data}")
+
+    if status not in (200, 201):
+        raise RuntimeError(
+            f"Ghost owner creation failed: HTTP {status}\n{data}"
         )
 
-        print(f"Ghost setup POST returned HTTP {status}.")
-        print(f"Ghost setup response: {data}")
+    print("Ghost owner account created successfully.")
 
-    except Exception as error:
-        print(f"Ghost setup request reported an error: {error}")
-        print("Checking whether the account was created anyway...")
 
-        time.sleep(5)
+def verify_owner_created():
+    print("Verifying Ghost setup...")
 
-        setup_status = check_setup_status()
+    for _ in range(10):
+        try:
+            status = get_setup_status()
 
-        if setup_status is True:
-            print("Ghost setup completed successfully.")
-            return
+            if status is True:
+                print("Ghost setup is complete.")
+                return
 
-        raise
+        except Exception as error:
+            print(f"Verification attempt failed: {error}")
+
+        time.sleep(2)
+
+    raise RuntimeError(
+        "Ghost owner account was not confirmed after setup."
+    )
 
 
 def main():
@@ -146,9 +178,17 @@ def main():
     print(f"Ghost URL: {GHOST_URL}")
     print(f"Test email: {GHOST_EMAIL}")
 
+    if not GHOST_EMAIL:
+        raise RuntimeError("GHOST_EMAIL is missing.")
+
+    if not GHOST_PASSWORD:
+        raise RuntimeError("GHOST_PASSWORD is missing.")
+
     wait_for_ghost()
 
-    setup_status = check_setup_status()
+    setup_status = get_setup_status()
+
+    print(f"Ghost setup status: {setup_status}")
 
     if setup_status is True:
         print("Ghost is already initialized.")
@@ -156,7 +196,8 @@ def main():
 
     if setup_status is False:
         create_owner()
-        print("Ghost owner account created successfully.")
+        verify_owner_created()
+        print("=== Ghost CI Bootstrap Complete ===")
         return
 
     raise RuntimeError(
@@ -165,4 +206,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as error:
+        print(f"\nBOOTSTRAP FAILED: {error}")
+        sys.exit(1)

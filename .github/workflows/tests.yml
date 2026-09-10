@@ -4,18 +4,20 @@ on:
   push:
     branches:
       - main
+
   pull_request:
     branches:
       - main
 
 jobs:
   test:
-    name: Tests - ${{ matrix.browser }}
+    name: Ghost QA - ${{ matrix.browser }}
 
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
+
       matrix:
         browser:
           - chromium
@@ -25,8 +27,10 @@ jobs:
     services:
       ghost:
         image: ghost:5-alpine
+
         ports:
           - 3001:2368
+
         env:
           NODE_ENV: development
           url: http://localhost:3001
@@ -42,7 +46,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
@@ -51,31 +55,61 @@ jobs:
         run: |
           python -m playwright install --with-deps ${{ matrix.browser }}
 
-      - name: Create fresh CI credentials
+      - name: Generate CI Ghost credentials
         shell: bash
         run: |
           echo "GHOST_URL=http://localhost:3001" >> "$GITHUB_ENV"
           echo "GHOST_EMAIL=qa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}@example.com" >> "$GITHUB_ENV"
           echo "GHOST_PASSWORD=Qa-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-GhostTest!2026" >> "$GITHUB_ENV"
 
-      - name: Show Ghost container status
-        if: always()
+      - name: Check Ghost service
+        shell: bash
         run: |
+          echo "Checking Ghost container..."
           docker ps -a
-          docker logs $(docker ps -aq --filter ancestor=ghost:5-alpine | head -n 1) || true
 
-      - name: Initialize fresh Ghost account
+          echo "Checking Ghost port..."
+          curl --fail --silent --show-error \
+            http://localhost:3001/ghost/api/admin/site/ \
+            > /dev/null
+
+          echo "Ghost service is reachable."
+
+      - name: Initialize Ghost owner
         run: |
           python scripts/setup_ghost.py
 
-      - name: Run QA tests
+      - name: Run smoke tests
         run: |
-          pytest \
-            tests/test_smoke.py \
-            tests/test_login.py \
-            tests/test_posts.py \
-            tests/test_publishing_bdd.py \
-            tests/test_accessibility.py \
+          pytest tests/test_smoke.py \
+            --browser=${{ matrix.browser }} \
+            -v \
+            --alluredir=allure-results
+
+      - name: Run login tests
+        run: |
+          pytest tests/test_login.py \
+            --browser=${{ matrix.browser }} \
+            -v \
+            --alluredir=allure-results
+
+      - name: Run post tests
+        run: |
+          pytest tests/test_posts.py \
+            --browser=${{ matrix.browser }} \
+            -v \
+            --alluredir=allure-results
+
+      - name: Run BDD publishing tests
+        run: |
+          pytest tests/test_publishing_bdd.py \
+            --browser=${{ matrix.browser }} \
+            -v \
+            --alluredir=allure-results
+
+      - name: Run accessibility tests
+        run: |
+          pytest tests/test_accessibility.py \
             --browser=${{ matrix.browser }} \
             -v \
             --alluredir=allure-results
@@ -88,12 +122,20 @@ jobs:
           path: allure-results/
           if-no-files-found: ignore
 
-      - name: Upload test artifacts
+      - name: Upload Playwright artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-artifacts-${{ matrix.browser }}
+          name: playwright-artifacts-${{ matrix.browser }}
           path: |
             test-results/
             screenshots/current/
           if-no-files-found: ignore
+
+      - name: Print Ghost logs
+        if: failure()
+        shell: bash
+        run: |
+          echo "===== GHOST CONTAINER LOGS ====="
+          docker ps -a
+          docker logs $(docker ps -aq --filter ancestor=ghost:5-alpine | head -n 1) || true
